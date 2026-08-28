@@ -74,6 +74,34 @@ app.post("/users", async (req, res) => {
     }
 });
 
+// get/ products
+app.get("/products", (req, res) => {
+    const sql = "SELECT p.id, p.name, p.description, p.price, p.stock_quantity, c.name AS category_name FROM products p INNER JOIN categories c ON p.category_id = c.id ORDER BY p.id ASC";
+    db.query(sql, (err, results) => {
+        if(err) return res.status(500).json ({message: "Server Error"});
+        res.json(results);
+    });
+});
+
+// get /products/category/:categoryId
+app.get("/products/category/:categoryId", (req, res) =>{
+    const {categoryId} = req.params;
+    const sql = "SELECT p.id, p.name, p.description, p.price, p.stock_quantity, c.name AS category_name FROM products p INNER JOIN categories c ON p.category_id = c.id WHERE p.category_id = ? ORDER BY p.id ASC";
+    db.query(sql, [categoryId], (err, results) => {
+        if (err) return res.status(500).json ({message: "Server Error"});
+        res.json(results);
+    });
+});
+
+// get /categories
+app.get("/categories", (req, res) => {
+    const sql = "SELECT c.id, c.name, c.description, COUNT(p.id) AS product_count FROM categories c LEFT JOIN products p ON p.category_id = c.id GROUP BY c.id, c.name, c.description ORDER BY c.id ASC";
+    db.query(sql, (err, results) => {
+        if(err) return res.status(500).json ({message: "Server Error"});
+        res.json(results);
+    });
+});
+
 async function startServer() {
     await connectMongo();
     app.listen(PORT, () => {
