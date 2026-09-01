@@ -247,6 +247,53 @@ app.get("/orders", authenticateToken, (req, res) => {
     });
 });
 
+// get /orders/my- current user orders
+app.get("/orders/my", authenticateToken, (req, res) => {
+    const sql = "SELECT id, status, total_amount, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC";
+    db.query(sql, [req.user.id], (err, results) => {
+        if(err) return res.status(500).json({message: "Server Error"});
+        res.json(results);
+    });
+});
+
+// get /orders/:id- single order with items
+app.get("/orders/:id", authenticateToken, (req, res) => {
+    const {id} = req.params;
+    const sql = "SELECT o.id AS order_id, o.status, o.total_amount, o.created_at, oi.id AS item_id, oi.quantity, oi.price_at_purchase, oi.subtotal, p.name AS product_name FROM orders o INNER JOIN order_items oi ON oi.order_id = o.id INNER JOIN products p ON p.id = oi.product_id WHERE o.id = ? ORDER BY oi.id ASC";
+    db.query(sql, [id], (err, results) => {
+        if(err) return res.status(500).json({message: "Server Error"});
+        if(results.length === 0){
+            return res.status(404).json({message: "Order Not Found"});
+        }
+        res.json(results);
+    });
+});
+
+// post /reviews
+app.post("/reviews", authenticateToken, async (req, res) => {
+    const {product_id, rating, review_text} = req.body;
+    if(!product_id || !rating || !review_text){
+        return res.status(400).json({message: "Product ID, Rating and Review text are required"});
+    }
+    if(rating < 1 || rating > 5){
+        return res.status(400).json({message: "rating must be between 1 and 5"});
+    }
+    try{
+        const mongo = getMongo();
+        const result = await mongo.collection("product_reviews").insertOne({
+            product_id: parseInt(product_id),
+            user_id: req.user.id,
+            first_name: req.user.email.split("@")[0],
+            rating: parseInt(rating),
+            review_text,
+            created_at: new Date()
+        });
+        res.status(201).json({message: "review submitted", reviewId: result.insertedId});
+    }catch(err){
+        res.status(500).json({message: "Server Error"});
+    }
+});
+
 async function startServer() {
     await connectMongo();
     app.listen(PORT, () => {
