@@ -1,63 +1,71 @@
 const db = require("../db");
-const {getMongo} = require("../mongo");
+const { getMongo } = require("../mongo");
 
 const createOrder = async (req, res) => {
-    const {items} = req.body || {};
+    const { items } = req.body || {};
     const userId = req.user.id;
-    if(!items || items.length === 0){
-        return res.status(400).json({message: "order must contain Atleast one item"});
+    if (!items || items.length === 0) {
+        return res.status(400).json({ message: "order must contain Atleast one item" });
     }
-    db.beginTransaction (async(err) => {
-        if(err) return res.status(500).json({message: "Server Error"});
-        try{
+    db.beginTransaction(async (err) => {
+        if (err) return res.status(500).json({ message: "Server Error" });
+        try {
             //Step 1: Calculate total amount
             let totalAmount = 0;
-            for (const item of items){
+            for (const item of items) {
                 totalAmount += item.price_at_purchase * item.quantity;
             }
             // Step 2: Insert Into orders
             const orderSql = "INSERT INTO orders(user_id, total_amount) VALUES (?, ?)";
             const orderResult = await new Promise((resolve, reject) => {
-                db.query (orderSql, [userId, totalAmount], (err, result) => {
-                    if (err) reject(err); else resolve(result);
+                db.query(orderSql, [userId, totalAmount], (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
                 });
             });
             const orderId = orderResult.insertId;
-            
+
             //Step 3: Insert order_items and update stock
-            for (const item of items){
-                const {product_id, quantity, price_at_purchase} = item;
+            for (const item of items) {
+                const { product_id, quantity, price_at_purchase } = item;
                 const subtotal = quantity * price_at_purchase;
-                
+
                 await new Promise((resolve, reject) => {
-                    const itemSql = "INSERT INTO order_items(order_id, product_id, quantity, price_at_purchase, subtotal) VALUES (?, ?, ?, ?, ?)";
-                    db.query (itemSql, [orderId, product_id, quantity, price_at_purchase, subtotal], (err, r) => {
-                        if(err) reject(err); else resolve (r);
-                    });
+                    const itemSql =
+                        "INSERT INTO order_items(order_id, product_id, quantity, price_at_purchase, subtotal) VALUES (?, ?, ?, ?, ?)";
+                    db.query(
+                        itemSql,
+                        [orderId, product_id, quantity, price_at_purchase, subtotal],
+                        (err, r) => {
+                            if (err) reject(err);
+                            else resolve(r);
+                        }
+                    );
                 });
-                
-                await new Promise ((resolve, reject) => {
-                    const stockSql = "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?";
-                    db.query (stockSql, [quantity, product_id, quantity], (err, r) => {
-                        if (err) reject (err);
-                        else if(r.affectedRows === 0) reject(new Error("Insufficient Stock"));
+
+                await new Promise((resolve, reject) => {
+                    const stockSql =
+                        "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?";
+                    db.query(stockSql, [quantity, product_id, quantity], (err, r) => {
+                        if (err) reject(err);
+                        else if (r.affectedRows === 0) reject(new Error("Insufficient Stock"));
                         else resolve(r);
                     });
                 });
             }
-            
+
             //Step 4: Commit
-            db.commit(async(err) => {
-                if(err){
+            db.commit(async (err) => {
+                if (err) {
                     return db.rollback(() => {
-                        res.status(500).json({message: "Commit Failed"});
+                        res.status(500).json({ message: "Commit Failed" });
                     });
                 }
-                
+
                 //Step 5: Auto log to MongoDB after commit
-                try{
+                try {
                     const mongo = getMongo();
-                    for(const item of items){
+                    for (const item of items) {
                         await mongo.collection("inventory_logs").insertOne({
                             product_id: item.product_id,
                             action: "Sold",
@@ -65,15 +73,15 @@ const createOrder = async (req, res) => {
                             timestamp: new Date()
                         });
                     }
-                }catch(mongoErr){
+                } catch (mongoErr) {
                     console.error("MongoDB log Failed:", mongoErr.message);
                 }
-                res.status(201).json({message: "Order Placed", orderId});
+                res.status(201).json({ message: "Order Placed", orderId });
             });
-        }catch(err){
+        } catch (err) {
             //Step 6: Rollback on any error
             db.rollback(() => {
-                res.status(400).json({message: err.message || "Order Failed"});
+                res.status(400).json({ message: err.message || "Order Failed" });
             });
         }
     });
@@ -82,37 +90,41 @@ const createOrder = async (req, res) => {
 const getAllOrders = (req, res) => {
     let sql;
     let params;
-    if(req.user.role === "admin"){
-        sql = "SELECT o.id, o.status, o.total_amount, o.created_at, u.first_name, u.last_name, u.email FROM orders o INNER JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC";
+    if (req.user.role === "admin") {
+        sql =
+            "SELECT o.id, o.status, o.total_amount, o.created_at, u.first_name, u.last_name, u.email FROM orders o INNER JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC";
         params = [];
-    }else{
-        sql = "SELECT id, status, total_amount, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC";
+    } else {
+        sql =
+            "SELECT id, status, total_amount, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC";
         params = [req.user.id];
     }
     db.query(sql, params, (err, results) => {
-        if(err) return res.status(500).json({message: "Server Error"});
+        if (err) return res.status(500).json({ message: "Server Error" });
         res.json(results);
     });
 };
 
 const getMyOrders = (req, res) => {
-    const sql = "SELECT id, status, total_amount, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC";
+    const sql =
+        "SELECT id, status, total_amount, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC";
     db.query(sql, [req.user.id], (err, results) => {
-        if(err) return res.status(500).json({message: "Server Error"});
+        if (err) return res.status(500).json({ message: "Server Error" });
         res.json(results);
     });
 };
 
 const getOrderById = (req, res) => {
-    const {id} = req.params;
-    const sql = "SELECT o.id AS order_id, o.status, o.total_amount, o.created_at, oi.id AS item_id, oi.quantity, oi.price_at_purchase, oi.subtotal, p.name AS product_name FROM orders o INNER JOIN order_items oi ON oi.order_id = o.id INNER JOIN products p ON p.id = oi.product_id WHERE o.id = ? ORDER BY oi.id ASC";
+    const { id } = req.params;
+    const sql =
+        "SELECT o.id AS order_id, o.status, o.total_amount, o.created_at, oi.id AS item_id, oi.quantity, oi.price_at_purchase, oi.subtotal, p.name AS product_name FROM orders o INNER JOIN order_items oi ON oi.order_id = o.id INNER JOIN products p ON p.id = oi.product_id WHERE o.id = ? ORDER BY oi.id ASC";
     db.query(sql, [id], (err, results) => {
-        if(err) return res.status(500).json({message: "Server Error"});
-        if(results.length === 0){
-            return res.status(404).json({message: "Order Not Found"});
+        if (err) return res.status(500).json({ message: "Server Error" });
+        if (results.length === 0) {
+            return res.status(404).json({ message: "Order Not Found" });
         }
         res.json(results);
     });
 };
 
-module.exports = {createOrder, getAllOrders, getMyOrders, getOrderById};
+module.exports = { createOrder, getAllOrders, getMyOrders, getOrderById };
